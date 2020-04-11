@@ -70,3 +70,78 @@ def epsilon_greedy(state, epsilon_greedy_annealing_step):
             return torch.argmax(policy_net(torch.tensor(state))).item()
     else:
         return env.action_space.sample()
+
+
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return
+
+    # Get a random batch to train on (experience replay)
+    # sample should be better than choice (w/o replacement converges faster)
+    transitions = random.sample(memory, BATCH_SIZE)
+
+    # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+    # detailed explanation). This converts batch-array of Transitions
+    # to Transition of batch-arrays.
+    batch = Transition(*[torch.tensor(x) for x in zip(*transitions)])
+
+    # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
+    # columns of actions taken. These are the actions which would've been taken
+    # for each batch state according to policy_net
+    Q = policy_net(batch.prev_obs).gather(1, batch.action.unsqueeze(1))
+
+    # Compute V(s_{t+1}) for all next states.
+    # Expected values of actions for non_final_next_states are computed based
+    # on the "older" target_net; selecting their best reward with max(1)[0].
+    # This is merged based on the mask, such that we'll have either the
+    # expected state value or 0 in case the state was final.
+    # <-- I believe that this leader-follower thing is for the sake of training stability. -->
+    Q_next_max = target_net(batch.obs).gather(1, batch.action.unsqueeze(1)).detach()
+    # Compute the expected Q values
+
+    Q_expected = batch.reward + GAMMA * Q_next_max
+
+    #print(Q.shape, Q_next_max.shape, Q_expected.shape)
+
+    # Compute Huber loss
+    loss = F.smooth_l1_loss(Q, Q_expected)
+
+    # Optimize the model
+    optimizer.zero_grad()
+    loss.backward()
+    for param in policy_net.parameters():
+        param.grad.data.clamp_(-1, 1)
+    optimizer.step()
+
+
+epsilon_greedy_annealing_step = 0
+for episode in range(1000):
+    prev_obs = env.reset()
+
+    totalreward = 0
+
+    for t in count():
+        action = epsilon_greedy(prev_obs,
+                                epsilon_greedy_annealing_step)
+        epsilon_greedy_annealing_step += 1
+
+        obs, reward, done, _ = env.step(action)
+        totalreward += reward
+
+        if len(memory) < 128:
+            memory.append((prev_obs, action, obs, reward))
+        prev_obs = obs
+
+        optimize_model()
+
+        if (t + 1) % 10 == 0:
+            env.render()
+        if done:
+            print(f"Episode {episode} done after {t+1} steps, total reward {totalreward}")
+            break
+
+    if episode % TARGET_UPDATE == 0:
+        target_net.load_state_dict(policy_net.state_dict())
+
+print("Done!")
+env.close()
