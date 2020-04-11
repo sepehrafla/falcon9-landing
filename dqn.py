@@ -140,8 +140,3 @@ for episode in range(1000):
             print(f"Episode {episode} done after {t+1} steps, total reward {totalreward}")
             break
 
-    if episode % TARGET_UPDATE == 0:
-        target_net.load_state_dict(policy_net.state_dict())
-
-print("Done!")
-env.close()
